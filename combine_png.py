@@ -19,6 +19,8 @@ from PIL import Image
 from typing import Tuple, Optional
 import argparse
 import sys
+import time
+import os
 
 
 COORD_REGEXES = [
@@ -131,9 +133,10 @@ def combine_pngs(folder: str, out_path: str, pad: int = 0, fill=(0, 0, 0), scale
 
 
 def _cli(argv=None):
+	ts = time.strftime("%Y%m%d_%H%M%S")
 	p = argparse.ArgumentParser(description='Combine tiled PNG images into one large PNG.')
 	p.add_argument('--folder', '-f', required=True, help='Folder containing PNG tiles')
-	p.add_argument('--out', '-o', default='combined.png', help='Output combined PNG file')
+	p.add_argument('--out', '-o', default=os.path.join('out', f'combined_{ts}.png'), help='Output combined PNG file')
 	p.add_argument('--pad', type=int, default=0, help='Pixel padding between tiles')
 	p.add_argument('--fill', default=None, help='Background fill color as R,G,B or R,G,B,A (e.g. 0,0,0)')
 	p.add_argument('--scale', type=float, default=1.0, help='Scale factor for the final image (e.g. 0.25 for 1/4 resolution)')
