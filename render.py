@@ -61,7 +61,7 @@ def standardize_bbox(pcl):
         scale = 1.0
     return ((pcl - center) / scale).astype(np.float32)
 
-def load_ply_xyz_rgb(ply_path: str, points_per_object: int | None = None, assume_srgb: bool = True):
+def load_ply_xyz_rgb(ply_path: str, points_per_object: int | None = None, assume_srgb: bool = True, normalize: bool = True):
     import open3d as o3d
     pcd = o3d.io.read_point_cloud(ply_path)
     if len(pcd.points) == 0:
@@ -83,10 +83,12 @@ def load_ply_xyz_rgb(ply_path: str, points_per_object: int | None = None, assume
         rgb = rgb[idx]
 
     # --- normalize AFTER subsampling so radius is consistent with image scale ---
-    xyz = standardize_bbox(xyz)
+    # The caller can request normalize=False to skip this step (used when computing a global bbox)
+    if normalize:
+        xyz = standardize_bbox(xyz)
 
     # after normalization (and any axis remap you keep)
-    xyz = apply_rpy(xyz, roll=0, pitch=90, yaw=90, degrees=True)   # e.g. lay it like glasses on table
+    xyz = apply_rpy(xyz, roll=0, pitch=90, yaw=0, degrees=True)   # e.g. lay it like glasses on table
 
     # --- optional axis remap like before ---
     xyz = xyz[:, [2, 0, 1]].copy()
@@ -127,6 +129,8 @@ def standardize_bbox(pcl: np.ndarray, points_per_object: int = None):
     maxs = np.amax(pcl, axis=0)
     center = (mins + maxs) / 2.0
     scale = np.max(maxs - mins)
+    scale_factor = 0.7  # Scale the final result by this factor, the smaller the closer the object
+    scale *= scale_factor
     if scale <= 0:
         scale = 1.0
     pcl = (pcl - center) / scale  # roughly inside [-0.5, 0.5] on the longest axis
@@ -228,7 +232,7 @@ def xml_tail():
 """
 
 def build_scene_xml(xyz: np.ndarray, rgb: np.ndarray | None, sphere_radius=0.025,
-                    width=1600, height=1200, fov=25, spp=256):
+                    width=1200, height=1200, fov=25, spp=256):
     parts = [xml_header(width, height, fov, spp)]
     # small z-lift so spheres don't z-fight with ground when normalized close to -0.5
     z_lift = 0.5 * sphere_radius
@@ -270,6 +274,8 @@ def render_ply_folder(
     spp: int = 256,
     mitsuba_exe: str = "mitsuba",
     mitsuba_variant: str = "cuda_ad_rgb",
+    global_bbox: bool = False,
+    scale_factor: float = 0.7,
 ):
     """
     Loads every .ply in in_folder, uses PLY colors (if present), normalizes geometry,
@@ -286,19 +292,50 @@ def render_ply_folder(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[info] Found {len(ply_files)} .ply files.")
+
+    # Optionally compute a single global bbox (center + scale) across all PLYs
+    global_center = None
+    global_scale = None
+    if global_bbox:
+        print('[info] Computing global bounding box across all PLYs (this may be slower).')
+        all_mins = None
+        all_maxs = None
+        for ply_path in ply_files:
+            xyz_tmp, _ = load_ply_xyz_rgb(str(ply_path), points_per_object=points_per_object, assume_srgb=True, normalize=False)
+            mins = np.amin(xyz_tmp, axis=0)
+            maxs = np.amax(xyz_tmp, axis=0)
+            if all_mins is None:
+                all_mins = mins
+                all_maxs = maxs
+            else:
+                all_mins = np.minimum(all_mins, mins)
+                all_maxs = np.maximum(all_maxs, maxs)
+        global_center = (all_mins + all_maxs) / 2.0
+        global_scale = np.max(all_maxs - all_mins)
+        # apply user scale factor (keeps compatibility with previous scale_factor behaviour)
+        global_scale *= float(scale_factor)
+        if global_scale <= 0:
+            global_scale = 1.0
+        print(f"[info] Global center: {global_center}, Global scale: {global_scale}")
     for idx, ply_path in enumerate(ply_files, 1):
         ply_path = Path(ply_path)
         name = ply_path.stem
         print(f"[{idx}/{len(ply_files)}] {name}")
 
-        # Load and normalize
-        # xyz, rgb = load_ply_xyz_rgb(str(ply_path))
+        # Load (optionally skip per-file normalization when using global bbox)
         xyz, rgb = load_ply_xyz_rgb(
             str(ply_path),
             points_per_object=points_per_object,
             assume_srgb=True,      # set False if your PLY colors are already linear
+            normalize=not global_bbox,
         )
-        xyz = standardize_bbox(xyz, points_per_object=points_per_object)
+        # If using a global bbox, normalize with the precomputed center/scale
+        if global_bbox:
+            assert global_center is not None and global_scale is not None
+            xyz = ((xyz - global_center) / global_scale).astype(np.float32)
+        else:
+            # Keep previous per-file normalization (with possible subsampling inside standardize_bbox)
+            xyz = standardize_bbox(xyz, points_per_object=points_per_object)
 
         # Optional axis remap like your original code (swap to z,x,y; flip x); comment out if not needed
         xyz = xyz[:, [2, 0, 1]].copy()
@@ -352,12 +389,14 @@ if __name__ == "__main__":
     parser.add_argument("--out_root", type=str, default="out", help="Root output folder (a timestamped subfolder will be created)")
     parser.add_argument("--points", type=int, default=None, help="Optional subsample count per object")
     parser.add_argument("--radius", type=float, default=0.025, help="Sphere radius per point")
-    parser.add_argument("--w", type=int, default=1600, help="Image width")
-    parser.add_argument("--h", type=int, default=1200, help="Image height")
+    parser.add_argument("--w", type=int, default=800, help="Image width")
+    parser.add_argument("--h", type=int, default=800, help="Image height")
     parser.add_argument("--fov", type=float, default=25.0, help="Perspective fov in degrees")
     parser.add_argument("--spp", type=int, default=256, help="Samples per pixel")
     parser.add_argument("--mitsuba", type=str, default="mitsuba", help="Path to mitsuba executable if not on PATH")
     parser.add_argument("--variant", type=str, default="cuda_ad_rgb", help="Mitsuba variant, e.g., cuda_ad_rgb / llvm_ad_rgb")
+    parser.add_argument("--global_bbox", action="store_true", help="Compute a single global bounding box across all PLYs and normalize all clouds with it")
+    parser.add_argument("--scale_factor", type=float, default=0.6, help="Scale factor applied to computed bbox scale (default 0.7)")
 
     args = parser.parse_args()
 
@@ -372,4 +411,6 @@ if __name__ == "__main__":
         spp=args.spp,
         mitsuba_exe=args.mitsuba,
         mitsuba_variant=args.variant,
+        global_bbox=args.global_bbox,
+        scale_factor=args.scale_factor,
     )
