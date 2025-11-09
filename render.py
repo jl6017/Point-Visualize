@@ -189,10 +189,9 @@ def xml_header(width=1600, height=1200, fov=25, spp=256):
     </bsdf>
 """
 
-def xml_sphere(x, y, z, r, rgb=None):
-    if rgb is None:
-        rgb = (1.0, 1.0, 1.0)
-    rr, gg, bb = rgb
+def xml_sphere(x, y, z, r, rgb=None, albedo_scale=0.85):  # <— tweak 0.7–0.95
+    if rgb is None: rgb = (1.0, 1.0, 1.0)
+    rr, gg, bb = [max(0.0, min(1.0, c * albedo_scale)) for c in rgb]
     return f"""
     <shape type="sphere">
         <float name="radius" value="{r}"/>
