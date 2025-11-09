@@ -232,10 +232,10 @@ def xml_tail():
 """
 
 def build_scene_xml(xyz: np.ndarray, rgb: np.ndarray | None, sphere_radius=0.025,
-                    width=1200, height=1200, fov=25, spp=256):
+                    width=1200, height=1200, fov=25, spp=256, z_lift_factor: float = 15.0):
     parts = [xml_header(width, height, fov, spp)]
     # small z-lift so spheres don't z-fight with ground when normalized close to -0.5
-    z_lift = 0.5 * sphere_radius
+    z_lift = float(z_lift_factor) * sphere_radius
     for i in range(xyz.shape[0]):
         x, y, z = float(xyz[i, 0]), float(xyz[i, 1]), float(xyz[i, 2] + z_lift)
         color = None if rgb is None else (float(rgb[i, 0]), float(rgb[i, 1]), float(rgb[i, 2]))
@@ -276,6 +276,7 @@ def render_ply_folder(
     mitsuba_variant: str = "cuda_ad_rgb",
     global_bbox: bool = False,
     scale_factor: float = 0.7,
+    z_lift_factor: float = 15.0,
 ):
     """
     Loads every .ply in in_folder, uses PLY colors (if present), normalizes geometry,
@@ -353,7 +354,8 @@ def render_ply_folder(
         xml = build_scene_xml(
             xyz, rgb,
             sphere_radius=sphere_radius,
-            width=img_w, height=img_h, fov=fov, spp=spp
+            width=img_w, height=img_h, fov=fov, spp=spp,
+            z_lift_factor=z_lift_factor,
         )
 
         # Paths
@@ -397,6 +399,7 @@ if __name__ == "__main__":
     parser.add_argument("--variant", type=str, default="cuda_ad_rgb", help="Mitsuba variant, e.g., cuda_ad_rgb / llvm_ad_rgb")
     parser.add_argument("--global_bbox", action="store_true", help="Compute a single global bounding box across all PLYs and normalize all clouds with it")
     parser.add_argument("--scale_factor", type=float, default=0.6, help="Scale factor applied to computed bbox scale (default 0.7)")
+    parser.add_argument("--z_lift_factor", type=float, default=15.0, help="Multiplier applied to sphere radius to compute a small z-lift so spheres clear the ground (default 15.0)")
 
     args = parser.parse_args()
 
@@ -413,4 +416,5 @@ if __name__ == "__main__":
         mitsuba_variant=args.variant,
         global_bbox=args.global_bbox,
         scale_factor=args.scale_factor,
+        z_lift_factor=args.z_lift_factor,
     )
