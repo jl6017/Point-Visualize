@@ -1,4 +1,7 @@
 out
 out/*
+out*/
+sim_draw/*
 data/*
 backup/*
+data-*

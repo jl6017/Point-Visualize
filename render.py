@@ -61,7 +61,16 @@ def standardize_bbox(pcl):
         scale = 1.0
     return ((pcl - center) / scale).astype(np.float32)
 
-def load_ply_xyz_rgb(ply_path: str, points_per_object: int | None = None, assume_srgb: bool = True, normalize: bool = True):
+def load_ply_xyz_rgb(
+    ply_path: str,
+    points_per_object: int | None = None,
+    assume_srgb: bool = True,
+    normalize: bool = True,
+    roll: float = 0.0,
+    pitch: float = 90.0,
+    yaw: float = 90.0,
+    degrees: bool = True,
+):
     import open3d as o3d
     pcd = o3d.io.read_point_cloud(ply_path)
     if len(pcd.points) == 0:
@@ -88,7 +97,8 @@ def load_ply_xyz_rgb(ply_path: str, points_per_object: int | None = None, assume
         xyz = standardize_bbox(xyz)
 
     # after normalization (and any axis remap you keep)
-    xyz = apply_rpy(xyz, roll=0, pitch=90, yaw=0, degrees=True)   # e.g. lay it like glasses on table
+    # Apply intrinsic roll/pitch/yaw (defaults match previous behavior)
+    xyz = apply_rpy(xyz, roll=roll, pitch=pitch, yaw=yaw, degrees=degrees)   # e.g. lay it like glasses on table
 
     # --- optional axis remap like before ---
     xyz = xyz[:, [2, 0, 1]].copy()
@@ -277,6 +287,7 @@ def render_ply_folder(
     global_bbox: bool = False,
     scale_factor: float = 0.7,
     z_lift_factor: float = 15.0,
+    grey: bool = False,
 ):
     """
     Loads every .ply in in_folder, uses PLY colors (if present), normalizes geometry,
@@ -350,6 +361,11 @@ def render_ply_folder(
             rgb = rgb[:m]
             xyz = xyz[:m]
 
+        # Optionally force all points to a neutral grey color (linear)
+        if grey:
+            # Use mid-grey in linear space
+            rgb = np.full((xyz.shape[0], 3), 0.5, dtype=np.float32)
+
         # Build XML
         xml = build_scene_xml(
             xyz, rgb,
@@ -388,9 +404,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser("Render a folder of PLY point clouds with Mitsuba 3")
     parser.add_argument("in_folder", type=str, help="Folder containing .ply files")
-    parser.add_argument("--out_root", type=str, default="out", help="Root output folder (a timestamped subfolder will be created)")
-    parser.add_argument("--points", type=int, default=None, help="Optional subsample count per object")
-    parser.add_argument("--radius", type=float, default=0.025, help="Sphere radius per point")
+    parser.add_argument("--out_root", type=str, default="out-gen", help="Root output folder (a timestamped subfolder will be created)")
+    parser.add_argument("--points", type=int, default=10000, help="Optional subsample count per object")
+    parser.add_argument("--radius", type=float, default=0.01, help="Sphere radius per point")
     parser.add_argument("--w", type=int, default=800, help="Image width")
     parser.add_argument("--h", type=int, default=800, help="Image height")
     parser.add_argument("--fov", type=float, default=25.0, help="Perspective fov in degrees")
@@ -398,8 +414,9 @@ if __name__ == "__main__":
     parser.add_argument("--mitsuba", type=str, default="mitsuba", help="Path to mitsuba executable if not on PATH")
     parser.add_argument("--variant", type=str, default="cuda_ad_rgb", help="Mitsuba variant, e.g., cuda_ad_rgb / llvm_ad_rgb")
     parser.add_argument("--global_bbox", action="store_true", help="Compute a single global bounding box across all PLYs and normalize all clouds with it")
-    parser.add_argument("--scale_factor", type=float, default=0.6, help="Scale factor applied to computed bbox scale (default 0.7)")
+    parser.add_argument("--scale_factor", type=float, default=0.7, help="Scale factor applied to computed bbox scale (default 0.7)")
     parser.add_argument("--z_lift_factor", type=float, default=15.0, help="Multiplier applied to sphere radius to compute a small z-lift so spheres clear the ground (default 15.0)")
+    parser.add_argument("--grey", action="store_true", help="Set all point colors to grey (overrides PLY colors)")
 
     args = parser.parse_args()
 
@@ -417,4 +434,5 @@ if __name__ == "__main__":
         global_bbox=args.global_bbox,
         scale_factor=args.scale_factor,
         z_lift_factor=args.z_lift_factor,
+        grey=args.grey,
     )
